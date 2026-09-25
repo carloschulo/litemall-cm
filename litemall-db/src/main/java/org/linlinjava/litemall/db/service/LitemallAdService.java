@@ -35,7 +35,18 @@ public class LitemallAdService {
         criteria.andDeletedEqualTo(false);
 
         if (!StringUtils.isEmpty(sort) && !StringUtils.isEmpty(order)) {
-            example.setOrderByClause(sort + " " + order);
+            String cleanSort = sort.trim();
+            String cleanOrder = order.trim();
+            for (LitemallAd.Column c : LitemallAd.Column.values()) {
+                if (c.value().equalsIgnoreCase(cleanSort) || c.getJavaProperty().equalsIgnoreCase(cleanSort)) {
+                    if ("asc".equalsIgnoreCase(cleanOrder)) {
+                        example.setOrderByClause(c.asc());
+                    } else if ("desc".equalsIgnoreCase(cleanOrder)) {
+                        example.setOrderByClause(c.desc());
+                    }
+                    break;
+                }
+            }
         }
 
         PageHelper.startPage(page, limit);
