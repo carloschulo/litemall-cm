@@ -118,9 +118,7 @@ public class LitemallGoodsService {
         criteria1.andDeletedEqualTo(false);
         criteria2.andDeletedEqualTo(false);
 
-        if (!StringUtils.isEmpty(sort) && !StringUtils.isEmpty(order)) {
-            example.setOrderByClause(sort + " " + order);
-        }
+        setOrderBy(example, sort, order);
 
         PageHelper.startPage(offset, limit);
 
@@ -142,12 +140,26 @@ public class LitemallGoodsService {
         }
         criteria.andDeletedEqualTo(false);
 
-        if (!StringUtils.isEmpty(sort) && !StringUtils.isEmpty(order)) {
-            example.setOrderByClause(sort + " " + order);
-        }
+        setOrderBy(example, sort, order);
 
         PageHelper.startPage(page, size);
         return goodsMapper.selectByExampleWithBLOBs(example);
+    }
+
+    private void setOrderBy(LitemallGoodsExample example, String sort, String order) {
+        if (!StringUtils.isEmpty(sort) && !StringUtils.isEmpty(order)) {
+            sort = sort.trim();
+            order = order.trim();
+            if ("asc".equalsIgnoreCase(order) || "desc".equalsIgnoreCase(order)) {
+                for (Column c : Column.values()) {
+                    if (c.getValue().equalsIgnoreCase(sort) || c.getJavaProperty().equalsIgnoreCase(sort)
+                            || (c == Column.retailPrice && "price".equalsIgnoreCase(sort))) {
+                        example.setOrderByClause("desc".equalsIgnoreCase(order) ? c.desc() : c.asc());
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     /**
