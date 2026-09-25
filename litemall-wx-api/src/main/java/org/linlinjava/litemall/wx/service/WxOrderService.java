@@ -324,6 +324,9 @@ public class WxOrderService {
             checkedGoodsList = cartService.queryByUidAndChecked(userId);
         } else {
             LitemallCart cart = cartService.findById(cartId);
+            if (cart == null || !cart.getUserId().equals(userId)) {
+                return ResponseUtil.badArgumentValue();
+            }
             checkedGoodsList = new ArrayList<>(1);
             checkedGoodsList.add(cart);
         }
