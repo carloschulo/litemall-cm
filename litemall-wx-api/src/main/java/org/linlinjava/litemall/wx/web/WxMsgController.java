@@ -48,12 +48,21 @@ public class WxMsgController {
     /**
      * 消息回复
      *
+     * @param signature
+     * @param timestamp
+     * @param nonce
      * @param request
      * @param response
      * @return
      */
     @PostMapping(value = "/config", produces = "application/xml;charset=utf-8")
-    public String config(HttpServletRequest request, HttpServletResponse response) {
+    public String config(@RequestParam(required = false) String signature,
+                         @RequestParam(required = false) String timestamp,
+                         @RequestParam(required = false) String nonce,
+                         HttpServletRequest request, HttpServletResponse response) {
+        if (!wxMaService.checkSignature(timestamp, nonce, signature)) {
+            return "fail";
+        }
         WxMaMessage wxMaMessage = null;
         try {
             wxMaMessage = WxMaMessage.fromXml(request.getInputStream());
