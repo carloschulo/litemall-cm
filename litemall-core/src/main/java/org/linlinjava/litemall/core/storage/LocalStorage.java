@@ -35,7 +35,7 @@ public class LocalStorage implements Storage {
     public void setStoragePath(String storagePath) {
         this.storagePath = storagePath;
 
-        this.rootLocation = Paths.get(storagePath);
+        this.rootLocation = Paths.get(storagePath).toAbsolutePath().normalize();
         try {
             Files.createDirectories(rootLocation);
         } catch (IOException e) {
@@ -54,7 +54,11 @@ public class LocalStorage implements Storage {
     @Override
     public void store(InputStream inputStream, long contentLength, String contentType, String keyName) {
         try {
-            Files.copy(inputStream, rootLocation.resolve(keyName), StandardCopyOption.REPLACE_EXISTING);
+            Path file = load(keyName);
+            if (file == null) {
+                throw new RuntimeException("Failed to store file " + keyName);
+            }
+            Files.copy(inputStream, file, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             throw new RuntimeException("Failed to store file " + keyName, e);
         }
@@ -74,13 +78,34 @@ public class LocalStorage implements Storage {
 
     @Override
     public Path load(String filename) {
-        return rootLocation.resolve(filename);
+        if (filename == null || filename.isEmpty() || rootLocation == null) {
+            return null;
+        }
+        try {
+            Path path = Paths.get(filename);
+            if (path.isAbsolute()) {
+                return null;
+            }
+            if (filename.startsWith("/") || filename.startsWith("\\")) {
+                return null;
+            }
+            Path file = rootLocation.resolve(filename).normalize().toAbsolutePath();
+            if (!file.startsWith(rootLocation) || file.equals(rootLocation)) {
+                return null;
+            }
+            return file;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @Override
     public Resource loadAsResource(String filename) {
         try {
             Path file = load(filename);
+            if (file == null) {
+                return null;
+            }
             Resource resource = new UrlResource(file.toUri());
             if (resource.exists() || resource.isReadable()) {
                 return resource;
@@ -96,6 +121,9 @@ public class LocalStorage implements Storage {
     @Override
     public void delete(String filename) {
         Path file = load(filename);
+        if (file == null) {
+            return;
+        }
         try {
             Files.delete(file);
         } catch (IOException e) {
