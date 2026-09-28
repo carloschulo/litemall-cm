@@ -210,16 +210,23 @@ public class LitemallOrderService {
     }
 
 
+    private String escapeSql(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.replace("\u0000", "").replace("\\", "\\\\").replace("'", "''");
+    }
+
     public Map<String, Object> queryVoSelective(String nickname, String consignee, String orderSn, LocalDateTime start, LocalDateTime end, List<Short> orderStatusArray, Integer page, Integer limit, String sort, String order) {
         List<String> querys = new ArrayList<>(4);
         if (!StringUtils.isEmpty(nickname)) {
-            querys.add(" u.nickname like '%" + nickname + "%' ");
+            querys.add(" u.nickname like '%" + escapeSql(nickname) + "%' ");
         }
         if (!StringUtils.isEmpty(consignee)) {
-            querys.add(" o.consignee like '%" + consignee + "%' ");
+            querys.add(" o.consignee like '%" + escapeSql(consignee) + "%' ");
         }
         if (!StringUtils.isEmpty(orderSn)) {
-            querys.add(" o.order_sn = '" + orderSn + "' ");
+            querys.add(" o.order_sn = '" + escapeSql(orderSn) + "' ");
         }
         DateTimeFormatter df = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
         if (start != null) {
@@ -235,7 +242,9 @@ public class LitemallOrderService {
         String query = StringUtils.collectionToDelimitedString(querys, "and");
         String orderByClause = null;
         if (!StringUtils.isEmpty(sort) && !StringUtils.isEmpty(order)) {
-            orderByClause = "o." + sort + " " + order +", o.id desc ";
+            if (sort.matches("^[a-zA-Z0-9_]+$") && ("asc".equalsIgnoreCase(order) || "desc".equalsIgnoreCase(order))) {
+                orderByClause = "o." + sort + " " + order + ", o.id desc ";
+            }
         }
 
         PageHelper.startPage(page, limit);
