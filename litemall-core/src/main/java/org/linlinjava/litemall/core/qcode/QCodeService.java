@@ -16,7 +16,7 @@ import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
-import java.net.URL;
+import java.net.*;
 
 @Service
 public class QCodeService {
@@ -108,8 +108,7 @@ public class QCodeService {
 
 
         //商品图片
-        URL goodPic = new URL(goodPicUrl);
-        BufferedImage goodImage = ImageIO.read(goodPic);
+        BufferedImage goodImage = loadSafeImage(goodPicUrl);
 
         //小程序二维码
         BufferedImage qrCodeImage = ImageIO.read(qrCodeImg);
@@ -123,7 +122,9 @@ public class QCodeService {
         drawImgInImg(baseImage, red, 0, 0, red.getWidth(), red.getHeight());
 
         //画上商品图片
-        drawImgInImg(baseImage, goodImage, 71, 69, 660, 660);
+        if (goodImage != null) {
+            drawImgInImg(baseImage, goodImage, 71, 69, 660, 660);
+        }
 
         //画上小程序二维码
         drawImgInImg(baseImage, qrCodeImage, 448, 767, 300, 300);
@@ -144,6 +145,196 @@ public class QCodeService {
 
         //最终byte数组
         return bs.toByteArray();
+    }
+
+    private BufferedImage loadSafeImage(String goodPicUrl) throws IOException {
+        if (goodPicUrl == null || goodPicUrl.trim().isEmpty()) {
+            throw new IOException("goodPicUrl cannot be empty");
+        }
+
+        String currentUrlStr = goodPicUrl.trim();
+        int maxRedirects = 5;
+
+        for (int redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+            URL currentUrl;
+            try {
+                currentUrl = new URL(currentUrlStr);
+            } catch (MalformedURLException e) {
+                throw new IOException("Malformed image URL: " + currentUrlStr, e);
+            }
+
+            String protocol = currentUrl.getProtocol();
+            if (protocol == null || (!protocol.equalsIgnoreCase("http") && !protocol.equalsIgnoreCase("https"))) {
+                throw new IOException("Unsupported protocol for image URL: " + protocol);
+            }
+
+            String host = currentUrl.getHost();
+            if (host == null || host.trim().isEmpty()) {
+                throw new IOException("Host cannot be empty in image URL: " + currentUrlStr);
+            }
+
+            String cleanHost = host.trim();
+            if (cleanHost.startsWith("[") && cleanHost.endsWith("]")) {
+                cleanHost = cleanHost.substring(1, cleanHost.length() - 1);
+            }
+
+            InetAddress[] addresses = InetAddress.getAllByName(cleanHost);
+            if (addresses == null || addresses.length == 0) {
+                throw new IOException("Cannot resolve host: " + host);
+            }
+
+            for (InetAddress address : addresses) {
+                if (isInternalOrReservedIp(address)) {
+                    throw new IOException("Access to internal/reserved address is forbidden: " + address.getHostAddress());
+                }
+            }
+
+            URLConnection urlConnection = currentUrl.openConnection();
+            if (!(urlConnection instanceof HttpURLConnection)) {
+                throw new IOException("Non-HTTP connection: " + currentUrlStr);
+            }
+
+            HttpURLConnection conn = (HttpURLConnection) urlConnection;
+            conn.setInstanceFollowRedirects(false);
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; LitemallBot/1.0)");
+            conn.connect();
+
+            int responseCode = conn.getResponseCode();
+            if (responseCode == HttpURLConnection.HTTP_MOVED_PERM ||
+                    responseCode == HttpURLConnection.HTTP_MOVED_TEMP ||
+                    responseCode == HttpURLConnection.HTTP_SEE_OTHER ||
+                    responseCode == 307 || responseCode == 308) {
+
+                String location = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (location == null || location.trim().isEmpty()) {
+                    throw new IOException("Redirect with empty Location header");
+                }
+                URL nextUrl = new URL(currentUrl, location.trim());
+                currentUrlStr = nextUrl.toString();
+                continue;
+            }
+
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                conn.disconnect();
+                throw new IOException("Failed to fetch image, HTTP response code: " + responseCode);
+            }
+
+            long contentLength = conn.getContentLengthLong();
+            if (contentLength > 20 * 1024 * 1024) {
+                conn.disconnect();
+                throw new IOException("Image size exceeds limit: " + contentLength);
+            }
+
+            try (InputStream in = conn.getInputStream()) {
+                return ImageIO.read(in);
+            } finally {
+                conn.disconnect();
+            }
+        }
+
+        throw new IOException("Too many redirects fetching image: " + goodPicUrl);
+    }
+
+    private static boolean isInternalOrReservedIp(InetAddress addr) {
+        if (addr.isAnyLocalAddress() || addr.isLoopbackAddress() ||
+                addr.isLinkLocalAddress() || addr.isSiteLocalAddress() ||
+                addr.isMulticastAddress()) {
+            return true;
+        }
+
+        byte[] raw = addr.getAddress();
+        if (raw.length == 4) {
+            return isInternalOrReservedIpv4(raw);
+        } else if (raw.length == 16) {
+            // Check for IPv4-mapped IPv6 address (::ffff:x.x.x.x) or IPv4-compatible (::x.x.x.x)
+            boolean isMapped = true;
+            for (int i = 0; i < 10; i++) {
+                if (raw[i] != 0) {
+                    isMapped = false;
+                    break;
+                }
+            }
+            if (isMapped) {
+                if ((raw[10] & 0xFF) == 0xFF && (raw[11] & 0xFF) == 0xFF) {
+                    // ::ffff:x.x.x.x
+                    byte[] ipv4 = new byte[4];
+                    System.arraycopy(raw, 12, ipv4, 0, 4);
+                    return isInternalOrReservedIpv4(ipv4);
+                } else if (raw[10] == 0 && raw[11] == 0) {
+                    // ::x.x.x.x
+                    byte[] ipv4 = new byte[4];
+                    System.arraycopy(raw, 12, ipv4, 0, 4);
+                    return isInternalOrReservedIpv4(ipv4);
+                }
+            }
+
+            int b0 = raw[0] & 0xFF;
+            int b1 = raw[1] & 0xFF;
+
+            // Unique Local Address fc00::/7 (fc00:: - fdff::)
+            if ((b0 & 0xFE) == 0xFC) {
+                return true;
+            }
+            // Link-local unicast fe80::/10
+            if (b0 == 0xFE && (b1 & 0xC0) == 0x80) {
+                return true;
+            }
+            // Site-local unicast (deprecated) fec0::/10
+            if (b0 == 0xFE && (b1 & 0xC0) == 0xC0) {
+                return true;
+            }
+            // Discard prefix 100::/64
+            if (b0 == 0x01 && b1 == 0x00) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isInternalOrReservedIpv4(byte[] raw) {
+        int b0 = raw[0] & 0xFF;
+        int b1 = raw[1] & 0xFF;
+        int b2 = raw[2] & 0xFF;
+        int b3 = raw[3] & 0xFF;
+
+        // 0.0.0.0/8 (Current network)
+        if (b0 == 0) return true;
+        // 10.0.0.0/8 (Private network)
+        if (b0 == 10) return true;
+        // 100.64.0.0/10 (Shared address space / Carrier grade NAT)
+        if (b0 == 100 && (b1 & 0xC0) == 64) return true;
+        // 127.0.0.0/8 (Loopback)
+        if (b0 == 127) return true;
+        // 169.254.0.0/16 (Link-local)
+        if (b0 == 169 && b1 == 254) return true;
+        // 172.16.0.0/12 (Private network)
+        if (b0 == 172 && (b1 >= 16 && b1 <= 31)) return true;
+        // 192.0.0.0/24 (IETF protocol assignments)
+        if (b0 == 192 && b1 == 0 && b2 == 0) return true;
+        // 192.0.2.0/24 (TEST-NET-1)
+        if (b0 == 192 && b1 == 0 && b2 == 2) return true;
+        // 192.88.99.0/24 (6to4 relay anycast)
+        if (b0 == 192 && b1 == 88 && b2 == 99) return true;
+        // 192.168.0.0/16 (Private network)
+        if (b0 == 192 && b1 == 168) return true;
+        // 198.18.0.0/15 (Benchmarking)
+        if (b0 == 198 && (b1 == 18 || b1 == 19)) return true;
+        // 198.51.100.0/24 (TEST-NET-2)
+        if (b0 == 198 && b1 == 51 && b2 == 100) return true;
+        // 203.0.113.0/24 (TEST-NET-3)
+        if (b0 == 203 && b1 == 0 && b2 == 113) return true;
+        // 224.0.0.0/4 (Multicast)
+        if ((b0 & 0xF0) == 224) return true;
+        // 240.0.0.0/4 (Reserved / Future use)
+        if ((b0 & 0xF0) == 240) return true;
+        // 255.255.255.255 (Broadcast)
+        if (b0 == 255 && b1 == 255 && b2 == 255 && b3 == 255) return true;
+
+        return false;
     }
 
     private void drawTextInImgCenter(BufferedImage baseImage, String textToWrite, int y) {
