@@ -236,6 +236,31 @@ public class AdminRoleController {
             return ResponseUtil.fail(AdminResponseCode.ROLE_SUPER_SUPERMISSION, "当前角色的超级权限不能变更");
         }
 
+        // 如果给角色分配的权限包含超级权限，则拒绝修改。
+        if (permissions.contains("*")) {
+            return ResponseUtil.fail(AdminResponseCode.ROLE_SUPER_SUPERMISSION, "当前角色的超级权限不能变更");
+        }
+
+        // 验证分配的权限是否在系统权限列表中
+        getSystemPermissions();
+        if (!systemPermissionsString.containsAll(permissions)) {
+            return ResponseUtil.badArgumentValue();
+        }
+
+        // 验证当前操作管理员的权限边界，普通管理员只能分配自己拥有的权限
+        Subject currentUser = SecurityUtils.getSubject();
+        if (currentUser != null && currentUser.getPrincipal() instanceof LitemallAdmin) {
+            LitemallAdmin currentAdmin = (LitemallAdmin) currentUser.getPrincipal();
+            Integer[] roles = currentAdmin.getRoleIds();
+            List<Integer> roleIds = Arrays.asList(roles);
+            if (!permissionService.checkSuperPermission(roleIds)) {
+                Set<String> curPermissions = permissionService.queryByRoleId(roleIds);
+                if (curPermissions == null || !curPermissions.containsAll(permissions)) {
+                    return ResponseUtil.unauthz();
+                }
+            }
+        }
+
         // 先删除旧的权限，再更新新的权限
         permissionService.deleteByRoleId(roleId);
         for (String permission : permissions) {
