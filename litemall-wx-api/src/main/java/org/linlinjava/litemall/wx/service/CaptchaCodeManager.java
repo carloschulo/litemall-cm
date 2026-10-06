@@ -3,8 +3,6 @@ package org.linlinjava.litemall.wx.service;
 import org.linlinjava.litemall.wx.dto.CaptchaItem;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -12,6 +10,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class CaptchaCodeManager {
     private static ConcurrentHashMap<String, CaptchaItem> captchaCodeCache = new ConcurrentHashMap<>();
+    private static ConcurrentHashMap<String, Integer> captchaAttempts = new ConcurrentHashMap<>();
+    private static final int MAX_ATTEMPTS = 3;
 
     /**
      * 添加到缓存
@@ -20,15 +20,19 @@ public class CaptchaCodeManager {
      * @param code        验证码
      */
     public static boolean addToCache(String phoneNumber, String code) {
-
+        if (phoneNumber == null || code == null) {
+            return false;
+        }
 
         //已经发过验证码且验证码还未过期
-        if (captchaCodeCache.get(phoneNumber) != null) {
-            if (captchaCodeCache.get(phoneNumber).getExpireTime().isAfter(LocalDateTime.now())) {
+        CaptchaItem existing = captchaCodeCache.get(phoneNumber);
+        if (existing != null) {
+            if (existing.getExpireTime().isAfter(LocalDateTime.now())) {
                 return false;
             } else {
                 //存在但是已过期，删掉
                 captchaCodeCache.remove(phoneNumber);
+                captchaAttempts.remove(phoneNumber);
             }
         }
 
@@ -39,6 +43,7 @@ public class CaptchaCodeManager {
         captchaItem.setExpireTime(LocalDateTime.now().plusMinutes(1));
 
         captchaCodeCache.put(phoneNumber, captchaItem);
+        captchaAttempts.remove(phoneNumber);
 
         return true;
     }
@@ -50,15 +55,45 @@ public class CaptchaCodeManager {
      * @return 验证码
      */
     public static String getCachedCaptcha(String phoneNumber) {
-        //没有这个电话记录
-        if (captchaCodeCache.get(phoneNumber) == null)
-            return null;
-
-        //有电话记录但是已经过期
-        if (captchaCodeCache.get(phoneNumber).getExpireTime().isBefore(LocalDateTime.now())) {
+        if (phoneNumber == null) {
             return null;
         }
 
-        return captchaCodeCache.get(phoneNumber).getCode();
+        CaptchaItem item = captchaCodeCache.get(phoneNumber);
+        //没有这个电话记录
+        if (item == null) {
+            return null;
+        }
+
+        //有电话记录但是已经过期
+        if (item.getExpireTime().isBefore(LocalDateTime.now())) {
+            captchaCodeCache.remove(phoneNumber);
+            captchaAttempts.remove(phoneNumber);
+            return null;
+        }
+
+        if (item.getCode() == null) {
+            return null;
+        }
+
+        int attempts = captchaAttempts.merge(phoneNumber, 1, Integer::sum);
+        if (attempts > MAX_ATTEMPTS) {
+            item.setCode(null);
+            return null;
+        }
+
+        return item.getCode();
+    }
+
+    /**
+     * 清除缓存的验证码
+     *
+     * @param phoneNumber 关联的电话号码
+     */
+    public static void removeCaptcha(String phoneNumber) {
+        if (phoneNumber != null) {
+            captchaCodeCache.remove(phoneNumber);
+            captchaAttempts.remove(phoneNumber);
+        }
     }
 }
