@@ -49,7 +49,7 @@ public class AdminUserController {
     	LitemallUser user=userService.findById(id);
         return ResponseUtil.ok(user);
     }
-    @RequiresPermissions("admin:user:list")
+    @RequiresPermissions("admin:user:update")
     @RequiresPermissionsDesc(menu = {"用户管理", "会员管理"}, button = "编辑")
     @PostMapping("/update")
     public Object userUpdate(@RequestBody LitemallUser user) {
