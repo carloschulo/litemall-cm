@@ -14,12 +14,14 @@ import org.linlinjava.litemall.core.validator.Order;
 import org.linlinjava.litemall.core.validator.Sort;
 import org.linlinjava.litemall.db.domain.LitemallAdmin;
 import org.linlinjava.litemall.db.service.LitemallAdminService;
+import org.linlinjava.litemall.db.service.LitemallPermissionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import javax.validation.constraints.NotNull;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.linlinjava.litemall.admin.util.AdminResponseCode.*;
@@ -32,6 +34,8 @@ public class AdminAdminController {
 
     @Autowired
     private LitemallAdminService adminService;
+    @Autowired
+    private LitemallPermissionService permissionService;
     @Autowired
     private LogHelper logHelper;
 
@@ -94,6 +98,30 @@ public class AdminAdminController {
         return ResponseUtil.ok(admin);
     }
 
+    private boolean isSuperAdmin(LitemallAdmin admin) {
+        if (admin == null || admin.getRoleIds() == null || admin.getRoleIds().length == 0) {
+            return false;
+        }
+        for (Integer roleId : admin.getRoleIds()) {
+            if (roleId.equals(1) || permissionService.checkSuperPermission(roleId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsSuperRole(Integer[] roleIds) {
+        if (roleIds == null || roleIds.length == 0) {
+            return false;
+        }
+        for (Integer roleId : roleIds) {
+            if (roleId.equals(1) || permissionService.checkSuperPermission(roleId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @RequiresPermissions("admin:admin:update")
     @RequiresPermissionsDesc(menu = {"系统管理", "管理员管理"}, button = "编辑")
     @PostMapping("/update")
@@ -106,6 +134,35 @@ public class AdminAdminController {
         Integer anotherAdminId = admin.getId();
         if (anotherAdminId == null) {
             return ResponseUtil.badArgument();
+        }
+
+        // 不能修改超级管理员
+        if (anotherAdminId.equals(1)) {
+            return ResponseUtil.fail(ADMIN_ALTER_NOT_ALLOWED, "超级管理员不能修改");
+        }
+
+        LitemallAdmin anotherAdmin = adminService.findById(anotherAdminId);
+        if (anotherAdmin == null) {
+            return ResponseUtil.badArgumentValue();
+        }
+
+        Subject currentUser = SecurityUtils.getSubject();
+        LitemallAdmin currentAdmin = (LitemallAdmin) currentUser.getPrincipal();
+
+        // 非超级管理员不能修改超级管理员
+        if (!isSuperAdmin(currentAdmin) && isSuperAdmin(anotherAdmin)) {
+            return ResponseUtil.fail(ADMIN_ALTER_NOT_ALLOWED, "超级管理员不能修改");
+        }
+
+        // 非超级管理员不能分配超级管理员角色
+        Integer[] roleIds = admin.getRoleIds();
+        if (roleIds != null && containsSuperRole(roleIds) && !isSuperAdmin(currentAdmin)) {
+            return ResponseUtil.fail(ADMIN_ALTER_NOT_ALLOWED, "超级管理员不能修改");
+        }
+
+        // 管理员不能修改自身角色
+        if (currentAdmin.getId().equals(anotherAdminId)) {
+            admin.setRoleIds(anotherAdmin.getRoleIds());
         }
 
         // 不允许管理员通过编辑接口修改密码
