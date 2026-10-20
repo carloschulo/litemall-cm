@@ -14,6 +14,7 @@ import org.linlinjava.litemall.core.validator.Order;
 import org.linlinjava.litemall.core.validator.Sort;
 import org.linlinjava.litemall.db.domain.LitemallAdmin;
 import org.linlinjava.litemall.db.service.LitemallAdminService;
+import org.linlinjava.litemall.db.service.LitemallPermissionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
@@ -32,8 +33,63 @@ public class AdminAdminController {
 
     @Autowired
     private LitemallAdminService adminService;
+    @Autowired(required = false)
+    private LitemallPermissionService permissionService;
     @Autowired
     private LogHelper logHelper;
+
+    private boolean isSuperAdminRole(Integer roleId) {
+        if (roleId == null) {
+            return false;
+        }
+        if (roleId.equals(1)) {
+            return true;
+        }
+        if (permissionService != null) {
+            return permissionService.checkSuperPermission(roleId);
+        }
+        return false;
+    }
+
+    private boolean isSuperAdmin(LitemallAdmin admin) {
+        if (admin == null || admin.getRoleIds() == null) {
+            return false;
+        }
+        for (Integer roleId : admin.getRoleIds()) {
+            if (isSuperAdminRole(roleId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isSuperAdminSubject() {
+        try {
+            Subject currentUser = SecurityUtils.getSubject();
+            if (currentUser == null) {
+                return false;
+            }
+            if (currentUser.isPermitted("*")) {
+                return true;
+            }
+            Object principal = currentUser.getPrincipal();
+            if (principal instanceof LitemallAdmin) {
+                LitemallAdmin currentAdmin = (LitemallAdmin) principal;
+                if (isSuperAdmin(currentAdmin)) {
+                    return true;
+                }
+                if (adminService != null && currentAdmin.getId() != null) {
+                    LitemallAdmin dbAdmin = adminService.findById(currentAdmin.getId());
+                    if (dbAdmin != null && isSuperAdmin(dbAdmin)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return false;
+    }
 
     @RequiresPermissions("admin:admin:list")
     @RequiresPermissionsDesc(menu = {"系统管理", "管理员管理"}, button = "查询")
@@ -58,6 +114,13 @@ public class AdminAdminController {
         String password = admin.getPassword();
         if (StringUtils.isEmpty(password) || password.length() < 6) {
             return ResponseUtil.fail(ADMIN_INVALID_PASSWORD, "管理员密码长度不能小于6");
+        }
+        if (admin.getRoleIds() != null) {
+            for (Integer roleId : admin.getRoleIds()) {
+                if (roleId != null && isSuperAdminRole(roleId) && !isSuperAdminSubject()) {
+                    return ResponseUtil.fail(ROLE_SUPER_SUPERMISSION, "当前角色的超级权限不能变更");
+                }
+            }
         }
         return null;
     }
@@ -108,6 +171,11 @@ public class AdminAdminController {
             return ResponseUtil.badArgument();
         }
 
+        LitemallAdmin targetAdmin = adminService.findById(anotherAdminId);
+        if (targetAdmin != null && isSuperAdmin(targetAdmin) && !isSuperAdminSubject()) {
+            return ResponseUtil.fail(ROLE_SUPER_SUPERMISSION, "当前角色的超级权限不能变更");
+        }
+
         // 不允许管理员通过编辑接口修改密码
         admin.setPassword(null);
 
@@ -133,6 +201,11 @@ public class AdminAdminController {
         LitemallAdmin currentAdmin = (LitemallAdmin) currentUser.getPrincipal();
         if (currentAdmin.getId().equals(anotherAdminId)) {
             return ResponseUtil.fail(ADMIN_DELETE_NOT_ALLOWED, "管理员不能删除自己账号");
+        }
+
+        LitemallAdmin targetAdmin = adminService.findById(anotherAdminId);
+        if (targetAdmin != null && isSuperAdmin(targetAdmin) && !isSuperAdminSubject()) {
+            return ResponseUtil.fail(ROLE_SUPER_SUPERMISSION, "当前角色的超级权限不能变更");
         }
 
         adminService.deleteById(anotherAdminId);
