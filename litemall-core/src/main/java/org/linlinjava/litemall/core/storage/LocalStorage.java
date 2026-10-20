@@ -74,7 +74,15 @@ public class LocalStorage implements Storage {
 
     @Override
     public Path load(String filename) {
-        return rootLocation.resolve(filename);
+        if (filename == null || filename.isEmpty()) {
+            throw new IllegalArgumentException("Invalid filename: path traversal attempt detected.");
+        }
+        Path root = rootLocation.toAbsolutePath().normalize();
+        Path file = rootLocation.resolve(filename).normalize().toAbsolutePath();
+        if (!file.startsWith(root) || file.equals(root)) {
+            throw new IllegalArgumentException("Invalid filename: path traversal attempt detected.");
+        }
+        return file;
     }
 
     @Override
